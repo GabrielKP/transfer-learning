@@ -5,6 +5,7 @@ import random
 import sys
 import torch
 import numpy as np
+from torch.nn.modules.loss import CrossEntropyLoss
 from torch.optim import optimizer
 from torch.utils.data.dataloader import DataLoader
 
@@ -255,11 +256,13 @@ def softmax( x ):
 
 class SequenceLoss():
 
-    def __init__(self, grammarGen: GrammarGen, grammaticality_bias=0.5, punishment=2):
+    def __init__(self, grammarGen: GrammarGen, grammaticality_bias=0, punishment=2):
         self.ggen = grammarGen
         self.gbias = grammaticality_bias
         self.number_grammar = grammarGen.number_grammar
         self.punishment = punishment
+
+        self.CELoss = nn.CrossEntropyLoss( ignore_index=PAD_TOKEN )
 
 
     def __call__(self, outputs: torch.tensor, labels):
@@ -268,48 +271,25 @@ class SequenceLoss():
 
         # print( outputs )
 
+        CEOutputs = outputs[:,1:].reshape(-1, vocab_size )
+        CELabels = labels[:,1:].reshape(-1)
+
         outputs = softmax( outputs )
 
-        print( outputs )
+        # print( outputs )
 
         # Judge grammaticality
         predictions = torch.argmax( outputs, -1 )
 
         # print( predictions )
-        #print( outputs.mean() )
-        for b in range( predictions.size(0) ):
+        # #print( outputs.mean() )
+        # for b in range( predictions.size(0) ):
 
-            seq = predictions[b]
+        #     finished = False
+        #     for i in range( len( seq ) - 1 ):
+        #         pass
 
-            seq_ints = seq.tolist()
-            finished = False
-            for i in range( len( seq ) - 1 ):
-
-                # If padtoken predicted
-                if seq_ints[i] == PAD_TOKEN:
-                    # mult with 0
-                    continue
-                # When sequence ends early
-                if seq_ints[i] == END_TOKEN:
-                    # set rest of numbers to 0 loss
-                    for j in range( i + 1, len( seq ) - 1 ):
-                        outputs[b][j] = outputs[b][j] * 0
-                    finished = True
-                    break
-
-                # Check whether number pairs are in grammar
-                if seq_ints[i + 1] in self.number_grammar[seq_ints[i]]:
-                    outputs[b][i] = outputs[b][i] * 0
-                else:
-                    outputs[b][i] = outputs[b][i] * self.punishment
-
-            # Handle last token
-            if seq_ints[-1] == END_TOKEN or finished:
-                outputs[b][-1] = outputs[b][-1] * 0
-            else:
-                outputs[b][-1] = outputs[b][-1] * self.punishment
-
-        return outputs.sum(-1).mean()
+        return outputs.sum(-1).mean() * self.gbias + self.CELoss( CEOutputs, CELabels ) * ( 1 - self.gbias )
 
 
 def main():
@@ -341,13 +321,13 @@ def main():
     # Misc parameters
     # dropout?
     epochs = 150
-    lr = 0.01
+    lr = 0.001
     teacher_forcing_ratio = 0.5
     use_embedding = True
     hidden_dim = 4
-    n_layers = 4
-    start_from_scratch = True
-    input_dim = len( ggen ) + 1 # need padding token to symbolize start, end, and padding
+    n_layers = 5
+    start_from_scratch = False
+    input_dim = len( ggen )
     FILENAME = 'autoEncoder-4.pt'
 
     # Get Model
@@ -356,7 +336,7 @@ def main():
         model.load_state_dict( torch.load( FILENAME ) )
 
     # Loss Function
-    #loss_func = nn.CrossEntropyLoss( ignore_index=PAD_TOKEN, reduction='sum' )
+    # loss_func = nn.CrossEntropyLoss( ignore_index=PAD_TOKEN, reduction='sum' )
     loss_func = SequenceLoss( ggen )
 
     # Train
